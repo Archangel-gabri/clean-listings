@@ -2,13 +2,12 @@
    Всё остальное живёт в Shadow DOM и на вёрстку Авито не влияет. */
 
 .avito-clean-seen {
-  opacity: 0.45;
   filter: grayscale(0.55);
-  transition: opacity 0.15s ease;
+  transition: filter 0.15s ease;
 }
 
 .avito-clean-seen:hover {
-  opacity: 0.9;
+  filter: grayscale(0.15);
 }
 
 .avito-clean-hidden {
@@ -31,20 +30,30 @@
   pointer-events: none;
 }
 
-/* Счётчик скрытых магазинов. Лежит вне карточек, поэтому его нельзя
-   случайно спрятать вместе с ними. */
+/* Родная метка Авито «Просмотрено» стоит ровно там же — в левом верхнем углу
+   фотографии. На карточке, которая одновременно перекуп и уже просмотрена,
+   наш штамп ложился поверх неё, и нечитаемыми становились обе. Сдвигаем свой
+   штамп ниже ровно в этом случае: 30 px — высота родной плашки плюс зазор. */
+.avito-clean-seen .avito-clean-stamp {
+  top: 42px;
+}
+
+/* Счётчик скрытых магазинов стоит в потоке прямо перед выдачей. До 1.1.2
+   он был fixed и перекрывал фильтры слева; перенос в другой угол лишь
+   перекрыл бы другой элемент Авито. */
 .avito-clean-counter {
-  position: fixed;
-  left: 16px;
-  bottom: 16px;
-  z-index: 2147483000;
+  position: static;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 12px;
   padding: 9px 14px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 10px;
   background: #2a2f36;
   color: #fff;
   font: 500 13px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+  text-align: left;
   cursor: pointer;
   user-select: none;
 }

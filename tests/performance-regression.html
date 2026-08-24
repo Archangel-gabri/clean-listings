@@ -46,6 +46,7 @@
         const b = luminance(bg);
         return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
       };
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
       const cardsRoot = document.getElementById('cards');
       for (let i = 0; i < 50; i++) {
@@ -85,12 +86,14 @@
         assert(pageThemeReads <= 2, `theme was recomputed ${pageThemeReads} times`);
       });
 
-      await test('плашка вернуть остаётся читаемой и кликабельной', () => {
+      await test('плашка вернуть остаётся читаемой и кликабельной', async () => {
         const card = cards[0];
         const row = AC.render.row(card, card.querySelector('.anchor'));
         let restored = false;
         AC.render.seenBadge(row, card, 'test-id', () => { restored = true; });
         const button = row.querySelector('.seen');
+        // Проверяем закончившееся состояние, а не старт transition с opacity: 1.
+        await delay(200);
         const cardStyle = getComputedStyle(card);
         const buttonStyle = getComputedStyle(button);
 
@@ -104,10 +107,20 @@
       });
 
       await test('счётчик не закрывает штатную левую колонку', () => {
-        AC.render.counter(33, () => {});
+        AC.render.counter(33, () => {}, cardsRoot);
         const counter = document.querySelector('.avito-clean-counter');
         const nativeFilter = document.querySelector('.native-filter');
-        assert(!intersects(counter.getBoundingClientRect(), nativeFilter.getBoundingClientRect()),
+        const counterStyle = getComputedStyle(counter);
+        const counterRect = counter.getBoundingClientRect();
+        const listingRect = cardsRoot.getBoundingClientRect();
+        equal(counter.nextElementSibling, cardsRoot, 'counter must be inline before listing root');
+        assert(!['fixed', 'absolute'].includes(counterStyle.position),
+          'counter must participate in page flow');
+        equal(counterStyle.boxSizing, 'border-box', 'counter box sizing');
+        equal(counterStyle.textAlign, 'left', 'counter text alignment');
+        assert(Math.abs(counterRect.width - listingRect.width) <= 1,
+          `counter width ${counterRect.width} differs from listing width ${listingRect.width}`);
+        assert(!intersects(counterRect, nativeFilter.getBoundingClientRect()),
           'counter overlaps native filter area');
         counter.remove();
       });
