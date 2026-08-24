@@ -1,7 +1,7 @@
 # Clean Listings for Avito
 
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-4c8bf5)](manifest.json)
-[![No dependencies](https://img.shields.io/badge/dependencies-none-2ea44f)](package.json)
+[![No dependencies](https://img.shields.io/badge/dependencies-none-2ea44f)](#stack)
 [![No network calls](https://img.shields.io/badge/network%20calls-none-2ea44f)](#privacy)
 [![Tests](https://img.shields.io/badge/regression%20tests-28-2ea44f)](tests/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -140,3 +140,7 @@ in the code you see here. Versions 1.1.2 and later build on that work.
 
 [MIT](LICENSE) — Vadim Kubrak. *Avito is a trademark of its respective owner. This project is
 an independent open-source tool and is not affiliated with or endorsed by them.*
+
+---
+
+*Store listing text (Russian): [`store/listing.ru.txt`](store/listing.ru.txt)*
