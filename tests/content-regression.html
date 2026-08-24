@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Avito Clean content regression</title>
+</head>
+<body>
+  <main data-marker="catalog-serp">
+    <article data-marker="item" data-item-id="2000001" id="inside-card">
+      <div><a data-marker="item-title" href="https://www.avito.ru/moskva/test/inside_2000001">В выдаче</a></div>
+      <div><span itemprop="price" content="1000"></span></div>
+      <a href="https://www.avito.ru/brands/shop-1?src=search_seller_info">Магазин</a>
+    </article>
+  </main>
+  <aside>
+    <article data-marker="item" data-item-id="9000002" id="outside-card">
+      <div><a data-marker="item-title" href="https://www.avito.ru/moskva/test/outside_9000002">Другая секция</a></div>
+      <a href="https://www.avito.ru/brands/shop-2?src=search_seller_info">Магазин</a>
+    </article>
+  </aside>
+  <pre id="result">RUNNING</pre>
+
+  <script src="../src/config.js"></script>
+  <script src="../src/parse.js"></script>
+  <script src="../src/render.js"></script>
+  <script>
+    const root = document.querySelector('[data-marker="catalog-serp"]');
+    const realPageContext = AC.parse.pageContext;
+    let context = { kind: 'search', root };
+    let storageListener = null;
+    const markCalls = [];
+
+    // Фикстура не должна реально уходить по публичным ссылкам при synthetic click.
+    document.addEventListener('click', (event) => event.preventDefault());
+
+    AC.parse.pageContext = () => context;
+    let stubHideShops = false;
+    AC.store = {
+      load: async () => {},
+      getHideShops: () => stubHideShops,
+      isSeen: () => false,
+      isRestored: () => false,
+      markSeen: (id) => { markCalls.push(String(id)); return true; },
+      restoreItem: () => {},
+      setHideShops: async () => true,
+      onChange: (listener) => { storageListener = listener; }
+    };
+
+    window.__CONTENT_TEST_STATE__ = {
+      setContext(value) { context = value; },
+      setHideShops(value) { stubHideShops = !!value; },
+      markCalls,
+      fireStorageChange() { if (storageListener) storageListener(); },
+      restoreParser() { AC.parse.pageContext = realPageContext; }
+    };
+  </script>
+  <script src="../src/content.js"></script>
+  <script>
+    (async () => {
+      const results = [];
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (value, message) => { if (!value) throw new Error(message); };
+      const equal = (actual, expected, message) => {
+        if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
+      };
+      const test = async (name, fn) => {
+        try { await fn(); results.push({ name, ok: true }); }
+        catch (error) { results.push({ name, ok: false, error: error.message }); }
+      };
+
+      await delay(50);
+
+      await test('content обрабатывает только search root', () => {
+        // Вердикт «магазин» несёт штамп, ряд плашек под ценой появляется только
+        // ради «ещё N объявлений» — поэтому проверяем любой наш узел, а не host.
+        assert(document.querySelector('#inside-card .avito-clean-stamp, #inside-card .avito-clean-host'),
+          'inside card not rendered');
+        assert(!document.querySelector('#outside-card .avito-clean-stamp, #outside-card .avito-clean-host'),
+          'outside card was rendered');
+      });
+
+      await test('штамп называет магазин магазином', () => {
+        const stamp = document.querySelector('#inside-card .avito-clean-stamp');
+        assert(stamp, 'stamp missing');
+        equal(stamp.shadowRoot.querySelector('.s').textContent, 'магазин', 'stamp word');
+        assert(/не частное лицо/.test(stamp.title), 'stamp title: ' + stamp.title);
+      });
+
+      await test('unsupported context очищает прежний UI', async () => {
+        __CONTENT_TEST_STATE__.setContext({ kind: 'unsupported' });
+        document.body.appendChild(document.createElement('i'));
+        await delay(300);
+        equal(document.querySelectorAll('.avito-clean-host, .avito-clean-counter, .avito-clean-stamp').length, 0, 'extension nodes');
+        equal(document.querySelectorAll('[data-avito-clean-sig], .avito-clean-seen, .avito-clean-hidden').length, 0, 'extension state');
+      });
+
+      await test('item context очищает UI и отмечает только подтверждённый id', async () => {
+        __CONTENT_TEST_STATE__.setContext({ kind: 'item', itemId: '3000001' });
+        document.body.appendChild(document.createElement('i'));
+        await delay(300);
+        assert(__CONTENT_TEST_STATE__.markCalls.includes('3000001'), 'item id was not marked');
+        equal(document.querySelectorAll('.avito-clean-host, .avito-clean-counter, .avito-clean-stamp').length, 0, 'item UI cleanup');
+      });
+
+      await test('click handler ограничен title внутри search root', async () => {
+        __CONTENT_TEST_STATE__.setContext({ kind: 'search', root });
+        document.body.appendChild(document.createElement('i'));
+        await delay(300);
+        const before = __CONTENT_TEST_STATE__.markCalls.length;
+        document.querySelector('#outside-card [data-marker="item-title"]')
+          .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+        equal(__CONTENT_TEST_STATE__.markCalls.length, before, 'outside click was marked');
+        document.querySelector('#inside-card [data-marker="item-title"]')
+          .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+        equal(__CONTENT_TEST_STATE__.markCalls.at(-1), '2000001', 'inside click id');
+      });
+
+      await test('ленивая append-подгрузка получает UI и пересчитывает повторы', async () => {
+        const card = document.createElement('article');
+        card.dataset.marker = 'item';
+        card.dataset.itemId = '2000002';
+        card.innerHTML = `
+          <div><a data-marker="item-title" href="https://www.avito.ru/moskva/test/lazy_2000002">Новая карточка</a></div>
+          <div><span itemprop="price" content="2000"></span></div>
+          <a href="https://www.avito.ru/brands/shop-1?src=search_seller_info">Магазин</a>`;
+        root.appendChild(card);
+        await delay(300);
+        assert(card.querySelector('.avito-clean-host'), 'lazy card not rendered');
+        const duplicateBadges = [...root.querySelectorAll('.avito-clean-host')]
+          .filter((host) => host.shadowRoot?.querySelector('.dup')).length;
+        equal(duplicateBadges, 2, 'duplicate badges after append');
+      });
+
+      await test('storage events coalesce без глобального удаления signature', async () => {
+        const card = document.getElementById('inside-card');
+        const signature = card.dataset.avitoCleanSig;
+        __CONTENT_TEST_STATE__.fireStorageChange();
+        assert(card.dataset.avitoCleanSig === signature, 'signature deleted synchronously');
+        await delay(300);
+        assert(card.dataset.avitoCleanSig, 'signature missing after refresh');
+      });
+
+      await test('пустого экрана не бывает: скрывать всё — не скрываем ничего', async () => {
+        __CONTENT_TEST_STATE__.setContext({ kind: 'search', root });
+        // В фикстуре обе карточки выдачи — витрины, то есть профи поголовно.
+        // Ровно этот случай («iPhone 16») и оставлял владельца перед пустым
+        // экраном с плашкой «Скрыто: 50».
+        __CONTENT_TEST_STATE__.setHideShops(true);
+        __CONTENT_TEST_STATE__.fireStorageChange();
+        await delay(400);
+        equal(root.querySelectorAll('.avito-clean-hidden').length, 0, 'скрытые карточки');
+        equal(document.querySelectorAll('.avito-clean-counter').length, 0, 'счётчик скрытых');
+        assert(root.querySelector('.avito-clean-stamp'), 'штамп исчез вместе с гашением');
+        __CONTENT_TEST_STATE__.setHideShops(false);
+        __CONTENT_TEST_STATE__.fireStorageChange();
+        await delay(300);
+      });
+
+      const failed = results.filter((entry) => !entry.ok);
+      window.__FIXTURE_RESULT__ = { total: results.length, passed: results.length - failed.length, failed: failed.length, results };
+      window.__FIXTURE_DONE__ = true;
+      document.getElementById('result').textContent = JSON.stringify(window.__FIXTURE_RESULT__, null, 2);
+      document.title = failed.length ? `FAIL ${failed.length}/${results.length}` : `PASS ${results.length}/${results.length}`;
+      __CONTENT_TEST_STATE__.restoreParser();
+    })();
+  </script>
+</body>
+</html>

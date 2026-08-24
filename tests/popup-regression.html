@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Avito Clean popup regression</title></head>
+<body>
+  <p class="state" id="state"><span class="dot" id="stateDot"></span><span id="stateText">Работает на avito.ru</span></p>
+  <label><input type="checkbox" id="hideShops"></label>
+  <b id="seen">0</b>
+  <button id="reset">Забыть просмотренные</button>
+  <pre id="result">RUNNING</pre>
+
+  <script>
+    const rawCalls = [];
+    const storageListeners = [];
+    globalThis.chrome = {
+      storage: {
+        local: {
+          async get(keys) { rawCalls.push(['get', keys]); return { settings: { hideShops: false } }; },
+          async set(value) { rawCalls.push(['set', value]); },
+          async remove(keys) { rawCalls.push(['remove', keys]); }
+        },
+        onChanged: { addListener(listener) { storageListeners.push(listener); } }
+      }
+    };
+    globalThis.__POPUP_TEST__ = {
+      rawCalls,
+      summaryCalls: 0,
+      setCalls: [],
+      clearCalls: 0,
+      seenCount: 3
+    };
+  </script>
+  <script src="../src/config.js"></script>
+  <script src="../src/store.js"></script>
+  <script>
+    AC.store.getSummary = async () => {
+      __POPUP_TEST__.summaryCalls++;
+      return { settings: { hideShops: true }, seenCount: __POPUP_TEST__.seenCount };
+    };
+    AC.store.setHideShops = async (value) => {
+      __POPUP_TEST__.setCalls.push(value);
+      return true;
+    };
+    AC.store.clearHistory = async () => {
+      __POPUP_TEST__.clearCalls++;
+      __POPUP_TEST__.seenCount = 0;
+    };
+  </script>
+  <script src="../popup/popup.js"></script>
+  <script>
+    (async () => {
+      const results = [];
+      const delay = () => new Promise((resolve) => setTimeout(resolve, 0));
+      const equal = (actual, expected, message) => {
+        if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
+      };
+      const test = async (name, fn) => {
+        try { await fn(); results.push({ name, ok: true }); }
+        catch (error) { results.push({ name, ok: false, error: error.message }); }
+      };
+      await delay();
+
+      await test('popup загружается через getSummary', () => {
+        equal(__POPUP_TEST__.summaryCalls, 1, 'summary calls');
+        equal(document.getElementById('hideShops').checked, true, 'toggle');
+        equal(document.getElementById('seen').textContent, '3', 'seen count');
+      });
+
+      await test('toggle вызывает узкий store API', async () => {
+        const toggle = document.getElementById('hideShops');
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+        await delay();
+        equal(__POPUP_TEST__.setCalls.at(-1), false, 'setHideShops argument');
+      });
+
+      await test('reset вызывает clearHistory и обновляет summary', async () => {
+        document.getElementById('reset').click();
+        await delay();
+        await delay();
+        equal(__POPUP_TEST__.clearCalls, 1, 'clear calls');
+        equal(document.getElementById('seen').textContent, '0', 'refreshed count');
+      });
+
+      await test('ошибка storage снимает ложный зелёный статус', async () => {
+        AC.store.clearHistory = async () => { throw new Error('storage unavailable'); };
+        const reset = document.getElementById('reset');
+        reset.disabled = false;
+        reset.click();
+        await delay();
+        equal(document.getElementById('state').classList.contains('error'), true, 'error state');
+        equal(document.getElementById('stateText').textContent, 'Хранилище недоступно', 'error text');
+      });
+
+      await test('popup не обращается к raw chrome.storage', () => {
+        equal(__POPUP_TEST__.rawCalls.length, 0, 'raw storage calls');
+      });
+
+      const failed = results.filter((entry) => !entry.ok);
+      window.__FIXTURE_RESULT__ = { total: results.length, passed: results.length - failed.length, failed: failed.length, results };
+      window.__FIXTURE_DONE__ = true;
+      document.getElementById('result').textContent = JSON.stringify(window.__FIXTURE_RESULT__, null, 2);
+      document.title = failed.length ? `FAIL ${failed.length}/${results.length}` : `PASS ${results.length}/${results.length}`;
+    })();
+  </script>
+</body>
+</html>

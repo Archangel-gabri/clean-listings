@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Авито Помощник",
+  "version": "1.1.1",
+  "description": "Прячет магазины и перекупов из выдачи Авито, гасит уже открытые объявления и показывает, кто занял всю страницу.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.avito.ru/*"
+      ],
+      "js": [
+        "src/config.js",
+        "src/store.js",
+        "src/parse.js",
+        "src/render.js",
+        "src/content.js"
+      ],
+      "css": [
+        "src/page.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Авито Помощник",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

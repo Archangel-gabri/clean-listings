@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Avito Clean store regression</title>
+</head>
+<body>
+  <pre id="result">RUNNING</pre>
+  <script>
+    (() => {
+      const now = Date.now();
+      const old = now - 31 * 864e5;
+      const data = {
+        'v:1000001': old,
+        'v:1000002': -old,
+        'v:1000003': now - 1000,
+        'v:1000004': -(now - 2000),
+        settings: { hideShops: true, preserved: 7 }
+      };
+      const listeners = [];
+      let delayFirstSnapshot = true;
+
+      const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+      const emit = (changes) => listeners.forEach((listener) => listener(changes, 'local'));
+      const pick = (keys) => {
+        if (keys === null) return clone(data);
+        if (typeof keys === 'string') return { [keys]: clone(data[keys]) };
+        const out = {};
+        for (const key of keys) out[key] = clone(data[key]);
+        return out;
+      };
+
+      globalThis.chrome = {
+        storage: {
+          local: {
+            async get(keys) {
+              const snapshot = pick(keys);
+              if (keys === null && delayFirstSnapshot) {
+                delayFirstSnapshot = false;
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              return snapshot;
+            },
+            async set(values) {
+              const changes = {};
+              for (const [key, value] of Object.entries(values)) {
+                changes[key] = { oldValue: clone(data[key]), newValue: clone(value) };
+                data[key] = clone(value);
+              }
+              emit(changes);
+            },
+            async remove(keys) {
+              const list = Array.isArray(keys) ? keys : [keys];
+              const changes = {};
+              for (const key of list) {
+                if (!(key in data)) continue;
+                changes[key] = { oldValue: clone(data[key]), newValue: undefined };
+                delete data[key];
+              }
+              if (Object.keys(changes).length) emit(changes);
+            }
+          },
+          onChanged: {
+            addListener(listener) { listeners.push(listener); }
+          }
+        }
+      };
+
+      globalThis.__STORE_STUB__ = {
+        data,
+        emitExternal(key, value) {
+          const oldValue = clone(data[key]);
+          data[key] = clone(value);
+          emit({ [key]: { oldValue, newValue: clone(value) } });
+        }
+      };
+    })();
+  </script>
+  <script src="../src/config.js"></script>
+  <script src="../src/store.js"></script>
+  <script>
+    (async () => {
+      const results = [];
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (value, message) => { if (!value) throw new Error(message); };
+      const equal = (actual, expected, message) => {
+        if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
+      };
+      const test = async (name, fn) => {
+        try { await fn(); results.push({ name, ok: true }); }
+        catch (error) { results.push({ name, ok: false, error: error.message }); }
+      };
+
+      let changeCalls = 0;
+      AC.store.onChange(() => { changeCalls++; });
+      const loading = AC.store.load();
+      await delay(10);
+      __STORE_STUB__.emitExternal('v:1000005', Date.now());
+      await loading;
+
+      await test('load применяет signed TTL к обоим знакам', () => {
+        assert(!AC.store.isSeen('1000001'), 'stale positive remains');
+        assert(!AC.store.isRestored('1000002'), 'stale negative remains');
+        assert(AC.store.isSeen('1000003'), 'fresh positive missing');
+        assert(AC.store.isRestored('1000004'), 'fresh negative missing');
+        assert(!('v:1000001' in __STORE_STUB__.data), 'stale positive not removed');
+        assert(!('v:1000002' in __STORE_STUB__.data), 'stale negative not removed');
+      });
+
+      await test('onChanged во время snapshot load не теряется', () => {
+        assert(AC.store.isSeen('1000005'), 'racing storage event was overwritten by snapshot');
+        assert(changeCalls >= 1, 'store listener did not fire');
+      });
+
+      await test('публичный API не экспортирует внутреннее состояние', () => {
+        equal(typeof AC.store.getHideShops, 'function', 'getHideShops');
+        equal(typeof AC.store.setHideShops, 'function', 'setHideShops');
+        equal(typeof AC.store.getSummary, 'function', 'getSummary');
+        equal(typeof AC.store.clearHistory, 'function', 'clearHistory');
+        equal('mem' in AC.store, false, 'mem export');
+        equal('setSetting' in AC.store, false, 'generic setSetting export');
+      });
+
+      await test('настройка сливается и summary считает только положительные marks', async () => {
+        assert(AC.store.getHideShops(), 'loaded setting missing');
+        await AC.store.setHideShops(false);
+        equal(__STORE_STUB__.data.settings.hideShops, false, 'hideShops persisted');
+        equal(__STORE_STUB__.data.settings.preserved, 7, 'sibling setting overwritten');
+        const summary = await AC.store.getSummary();
+        equal(summary.settings.hideShops, false, 'summary setting');
+        equal(summary.seenCount, 2, 'positive mark count');
+      });
+
+      await test('clearHistory удаляет marks и сохраняет settings', async () => {
+        await AC.store.clearHistory();
+        equal(Object.keys(__STORE_STUB__.data).filter((key) => key.startsWith('v:')).length, 0, 'marks remain');
+        equal(__STORE_STUB__.data.settings.preserved, 7, 'settings removed');
+      });
+
+      const failed = results.filter((entry) => !entry.ok);
+      window.__FIXTURE_RESULT__ = { total: results.length, passed: results.length - failed.length, failed: failed.length, results };
+      window.__FIXTURE_DONE__ = true;
+      document.getElementById('result').textContent = JSON.stringify(window.__FIXTURE_RESULT__, null, 2);
+      document.title = failed.length ? `FAIL ${failed.length}/${results.length}` : `PASS ${results.length}/${results.length}`;
+    })();
+  </script>
+</body>
+</html>

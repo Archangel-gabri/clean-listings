@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Avito Clean fixture regression</title>
+</head>
+<body>
+  <!-- Санитизированная структура живой выдачи 21.08.2026.
+       Сохранены только DOM-контракты расширения; тексты, реальные id и картинки удалены. -->
+  <main data-marker="catalog-serp" id="bx_serp-item-list">
+    <article data-marker="item" data-item-id="1000001">
+      <div class="title-wrap"><a data-marker="item-title" href="https://www.avito.ru/moskva/test/item_one_1000001">Товар 1</a></div>
+      <div data-marker="item-image">Просмотрено</div>
+      <div class="price-wrap"><meta itemprop="price" content="1000"></div>
+      <a href="https://www.avito.ru/brands/shop-42?src=search_seller_info">Магазин</a>
+      <span data-marker="seller-info/summary">(12 отзывов)</span>
+    </article>
+
+    <article data-marker="item" data-item-id="1000002">
+      <div class="title-wrap"><a data-marker="item-title" href="https://www.avito.ru/moskva/test/item_two_1000002">Товар 2</a></div>
+      <div data-marker="item-image"></div>
+      <div class="price-wrap"><span itemprop="price" content="2000"></span></div>
+      <a href="https://www.avito.ru/brands/shop-42?src=search_seller_info">Магазин</a>
+      <span data-marker="seller-info/summary">12 отзывов</span>
+    </article>
+
+    <!-- Главный regression case: карточка появляется раньше цены. -->
+    <article data-marker="item" data-item-id="1000003" id="partial-card">
+      <div class="title-wrap"><a data-marker="item-title" href="https://www.avito.ru/moskva/test/item_three_1000003">Товар 3</a></div>
+      <div data-marker="item-image"></div>
+      <a href="https://www.avito.ru/user/private-7?src=search_seller_info">Частник</a>
+    </article>
+  </main>
+
+  <!-- Карточка другой секции не должна попадать в поисковую выдачу. -->
+  <aside>
+    <article data-marker="item" data-item-id="9000001">
+      <a data-marker="item-title" href="https://www.avito.ru/moskva/test/outside_9000001">Вне выдачи</a>
+    </article>
+  </aside>
+
+  <pre id="result">RUNNING</pre>
+
+  <script src="../src/config.js"></script>
+  <script src="../src/parse.js"></script>
+  <script src="../src/render.js"></script>
+  <script>
+    (async () => {
+      const results = [];
+      const assert = (value, message) => { if (!value) throw new Error(message); };
+      const equal = (actual, expected, message) => {
+        if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
+      };
+      const loc = (href) => {
+        const url = new URL(href);
+        return {
+          href: url.href,
+          hostname: url.hostname,
+          pathname: url.pathname,
+          search: url.search,
+          hash: url.hash
+        };
+      };
+      const doc = (html) => new DOMParser().parseFromString(html, 'text/html');
+      const test = async (name, fn) => {
+        try {
+          await fn();
+          results.push({ name, ok: true });
+        } catch (error) {
+          results.push({ name, ok: false, error: error.message });
+        }
+      };
+
+      await test('явные типы страниц и fail-closed mobile', () => {
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/moskva/mebel_i_interer?q=test'), document).kind, 'search', 'search');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/'), document).kind, 'home', 'home');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/favorites'), document).kind, 'favorites', 'favorites');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/profile/items'), document).kind, 'my-items', 'my-items');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/profile/messenger'), document).kind, 'chat', 'chat');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/brands/shop-42/all'), document).kind, 'seller-profile', 'seller profile');
+        equal(AC.parse.pageContext(loc('https://m.avito.ru/moskva/test?q=x'), document).kind, 'unsupported', 'mobile');
+
+        const mapDoc = doc('<div data-marker="map-full"></div>');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/moskva/test?map=abc'), mapDoc).kind, 'map', 'map');
+
+        const itemDoc = doc('<h1 data-marker="item-view/title-info"></h1>');
+        const item = AC.parse.pageContext(loc('https://www.avito.ru/moskva/test/item_1234567'), itemDoc);
+        equal(item.kind, 'item', 'item');
+        equal(item.itemId, '1234567', 'item id');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/user/shop_1234567'), itemDoc).kind, 'seller-profile', 'profile false positive');
+        equal(AC.parse.pageContext(loc('https://www.avito.ru/search_1234567/'), itemDoc).kind, 'unsupported', 'search false positive');
+      });
+
+      await test('terminal item id не ловит служебные URL', () => {
+        equal(AC.parse.itemIdFromUrl('/moskva/test/item_1234567?x=1'), '1234567', 'real item');
+        equal(AC.parse.itemIdFromUrl('/brands/store_1234567/offers'), null, 'nested profile');
+        equal(AC.parse.itemIdFromUrl('/search_1234567/next'), null, 'nested synthetic');
+      });
+
+      await test('parser ограничен подтверждённым root выдачи', () => {
+        const root = document.querySelector('[data-marker="catalog-serp"]');
+        const cards = AC.parse.cards(root);
+        equal(cards.length, 3, 'card count');
+        assert(cards.every((card) => root.contains(card.el)), 'outside card leaked into search');
+      });
+
+      await test('seller ids namespaced, counts безопасны через Map', () => {
+        const cards = AC.parse.cards(document.querySelector('[data-marker="catalog-serp"]'));
+        equal(cards[0].seller.id, 'brands:shop-42', 'seller namespace');
+        const counts = AC.parse.countSellers(cards);
+        assert(counts instanceof Map, 'counts is not Map');
+        equal(counts.get('brands:shop-42'), 2, 'shop count');
+      });
+
+      await test('host переезжает от title к поздней цене', () => {
+        const root = document.querySelector('[data-marker="catalog-serp"]');
+        const cardEl = document.getElementById('partial-card');
+        let card = AC.parse.cards(root).find((entry) => entry.id === '1000003');
+        AC.render.row(card.el, card.badgeAnchor);
+        let host = cardEl.querySelector('.avito-clean-host');
+        equal(host.parentElement.className, 'title-wrap', 'initial anchor');
+
+        const priceWrap = document.createElement('div');
+        priceWrap.className = 'late-price-wrap';
+        priceWrap.innerHTML = '<span itemprop="price" content="3000"></span>';
+        cardEl.prepend(priceWrap);
+
+        card = AC.parse.cards(root).find((entry) => entry.id === '1000003');
+        AC.render.row(card.el, card.badgeAnchor);
+        host = cardEl.querySelector('.avito-clean-host');
+        equal(host.parentElement, priceWrap, 'late price anchor');
+        equal(card.anchorKind, 'price', 'anchor kind');
+      });
+
+      await test('cleanup удаляет только UI расширения', () => {
+        const card = document.querySelector('[data-item-id="1000001"]');
+        card.classList.add('avito-clean-seen', 'avito-clean-hidden');
+        card.dataset.avitoCleanSig = 'test';
+        AC.render.row(card, card.querySelector('.price-wrap'));
+        AC.render.counter(2, () => {});
+        AC.render.cleanupListingUi();
+        equal(document.querySelectorAll('.avito-clean-host, .avito-clean-counter').length, 0, 'hosts/counter');
+        assert(!card.classList.contains('avito-clean-seen'), 'seen class remains');
+        assert(!card.classList.contains('avito-clean-hidden'), 'hidden class remains');
+        assert(!card.hasAttribute('data-avito-clean-sig'), 'signature remains');
+        assert(document.querySelector('[data-marker="item-title"]'), 'native DOM was removed');
+      });
+
+      await test('интерактивные элементы доступны с клавиатуры', () => {
+        const card = document.querySelector('[data-item-id="1000001"]');
+        const row = AC.render.row(card, card.querySelector('.price-wrap'));
+        AC.render.seenBadge(row, card, '1000001', () => {});
+        const restore = row.querySelector('.seen');
+        equal(restore.tagName, 'BUTTON', 'restore tag');
+        equal(restore.type, 'button', 'restore type');
+        AC.render.counter(1, () => {});
+        const counter = document.querySelector('.avito-clean-counter');
+        equal(counter.tagName, 'BUTTON', 'counter tag');
+        equal(counter.type, 'button', 'counter type');
+      });
+
+      const failed = results.filter((entry) => !entry.ok);
+      window.__FIXTURE_RESULT__ = { total: results.length, passed: results.length - failed.length, failed: failed.length, results };
+      window.__FIXTURE_DONE__ = true;
+      document.getElementById('result').textContent = JSON.stringify(window.__FIXTURE_RESULT__, null, 2);
+      document.title = failed.length ? `FAIL ${failed.length}/${results.length}` : `PASS ${results.length}/${results.length}`;
+    })();
+  </script>
+</body>
+</html>
