@@ -253,7 +253,12 @@ AC.render = (function () {
 
   // Одна плавающая плашка вместо возни в каждой карточке: сколько магазинов спрятано
   // и как их вернуть. Живёт вне карточек, поэтому её невозможно случайно скрыть вместе с ними.
-  function counter(count, onShow) {
+  // До 1.1.2 плашка висела фиксированно в левом нижнем углу и ложилась поверх
+  // колонки фильтров Авито. Любое фиксированное положение что-нибудь закрывает —
+  // справа внизу у Авито кнопка чата, — поэтому плашка больше не парит, а встаёт
+  // полосой НАД списком выдачи, ровно как родная плашка «Выбраны фильтры… Отменить».
+  // Перекрытия нет по построению, а не по удачно подобранным отступам.
+  function counter(count, onShow, anchor) {
     let el = document.querySelector('.avito-clean-counter');
     if (!count) { if (el) el.remove(); return; }
 
@@ -263,6 +268,16 @@ AC.render = (function () {
       el.type = 'button';
       el.className = 'avito-clean-counter';
       el.addEventListener('click', onShow);
+    }
+
+    // Встаём соседом ПЕРЕД контейнером списка, а не внутрь него: внутри мы стали бы
+    // элементом чужой сетки и поехала бы вёрстка карточек.
+    const host = anchor && anchor.parentElement ? anchor.parentElement : null;
+    if (host) {
+      if (el.parentElement !== host || el.nextElementSibling !== anchor) {
+        host.insertBefore(el, anchor);
+      }
+    } else if (!el.parentElement) {
       document.body.appendChild(el);
     }
     // Присваивание textContent заменяет текстовый узел, а это мутация DOM.

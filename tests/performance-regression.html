@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Avito Clean performance regression</title>
+  <link rel="stylesheet" href="../src/page.css">
+  <style>
+    body { margin: 0; min-height: 100vh; }
+    #cards { display: grid; grid-template-columns: repeat(5, 180px); gap: 8px; padding: 16px 16px 120px 420px; }
+    .card { position: relative; min-height: 90px; border: 1px solid #ddd; }
+    .native-filter { position: fixed; left: 0; bottom: 0; width: min(400px, 40vw); height: 80px; }
+  </style>
+</head>
+<body>
+  <aside class="native-filter">Штатные фильтры площадки</aside>
+  <main id="cards"></main>
+  <pre id="result">RUNNING</pre>
+
+  <script src="../src/config.js"></script>
+  <script src="../src/render.js"></script>
+  <script>
+    (async () => {
+      const results = [];
+      const assert = (value, message) => { if (!value) throw new Error(message); };
+      const equal = (actual, expected, message) => {
+        if (actual !== expected) throw new Error(`${message}: expected ${expected}, got ${actual}`);
+      };
+      const test = async (name, fn) => {
+        try { await fn(); results.push({ name, ok: true }); }
+        catch (error) { results.push({ name, ok: false, error: error.message }); }
+      };
+      const intersects = (a, b) => !(
+        a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom
+      );
+      const srgb = (value) => {
+        const x = value / 255;
+        return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      };
+      const rgb = (value) => (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+      const luminance = (value) => {
+        const [r, g, b] = rgb(value).map(srgb);
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const contrast = (fg, bg) => {
+        const a = luminance(fg);
+        const b = luminance(bg);
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      };
+
+      const cardsRoot = document.getElementById('cards');
+      for (let i = 0; i < 50; i++) {
+        const card = document.createElement('article');
+        card.className = 'card';
+        card.innerHTML = `<div class="anchor">Карточка ${i + 1}</div>`;
+        cardsRoot.appendChild(card);
+      }
+      const cards = [...document.querySelectorAll('.card')];
+      const seller = { name: 'Магазин', isShop: true, reviews: 50 };
+
+      await test('50 карточек переиспользуют общие Shadow DOM стили', () => {
+        const realGetComputedStyle = window.getComputedStyle;
+        let pageThemeReads = 0;
+        window.getComputedStyle = function (element, pseudo) {
+          if (element === document.body || element === document.documentElement) pageThemeReads++;
+          return realGetComputedStyle.call(window, element, pseudo);
+        };
+        try {
+          AC.render.beginPass();
+          for (const card of cards) {
+            AC.render.stamp(card, seller, 1, false);
+            AC.render.row(card, card.querySelector('.anchor'));
+          }
+        } finally {
+          window.getComputedStyle = realGetComputedStyle;
+        }
+
+        const hosts = [...document.querySelectorAll('.avito-clean-stamp, .avito-clean-host')];
+        equal(hosts.length, 100, 'Shadow host count');
+        const styleNodes = hosts.reduce(
+          (sum, host) => sum + host.shadowRoot.querySelectorAll('style').length, 0
+        );
+        equal(styleNodes, 0, 'per-host style nodes');
+        const sheets = hosts.flatMap((host) => [...host.shadowRoot.adoptedStyleSheets]);
+        equal(new Set(sheets).size, 2, 'shared sheets: row and stamp');
+        assert(pageThemeReads <= 2, `theme was recomputed ${pageThemeReads} times`);
+      });
+
+      await test('плашка вернуть остаётся читаемой и кликабельной', () => {
+        const card = cards[0];
+        const row = AC.render.row(card, card.querySelector('.anchor'));
+        let restored = false;
+        AC.render.seenBadge(row, card, 'test-id', () => { restored = true; });
+        const button = row.querySelector('.seen');
+        const cardStyle = getComputedStyle(card);
+        const buttonStyle = getComputedStyle(button);
+
+        equal(cardStyle.opacity, '1', 'seen card opacity must not fade the control');
+        assert(cardStyle.filter.includes('grayscale'), 'seen card must remain visually distinct');
+        assert(contrast(buttonStyle.color, buttonStyle.backgroundColor) >= 4.5,
+          'restore button contrast below 4.5:1');
+        button.click();
+        assert(restored, 'restore callback was not called');
+        assert(!card.classList.contains('avito-clean-seen'), 'seen state remains after restore');
+      });
+
+      await test('счётчик не закрывает штатную левую колонку', () => {
+        AC.render.counter(33, () => {});
+        const counter = document.querySelector('.avito-clean-counter');
+        const nativeFilter = document.querySelector('.native-filter');
+        assert(!intersects(counter.getBoundingClientRect(), nativeFilter.getBoundingClientRect()),
+          'counter overlaps native filter area');
+        counter.remove();
+      });
+
+      const failed = results.filter((entry) => !entry.ok);
+      window.__FIXTURE_RESULT__ = {
+        total: results.length,
+        passed: results.length - failed.length,
+        failed: failed.length,
+        results
+      };
+      window.__FIXTURE_DONE__ = true;
+      document.getElementById('result').textContent = JSON.stringify(window.__FIXTURE_RESULT__, null, 2);
+      document.title = failed.length ? `FAIL ${failed.length}/${results.length}` : `PASS ${results.length}/${results.length}`;
+    })();
+  </script>
+</body>
+</html>

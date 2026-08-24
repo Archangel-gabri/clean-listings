@@ -10,7 +10,7 @@ if [[ -z "$playwright_package" ]]; then
 fi
 
 playwright_node_modules=$(dirname -- "$(dirname -- "$playwright_package")")
-for fixture in fixture-regression.html content-regression.html store-regression.html popup-regression.html; do
+for fixture in fixture-regression.html content-regression.html performance-regression.html store-regression.html popup-regression.html; do
   NODE_PATH="$playwright_node_modules${NODE_PATH:+:$NODE_PATH}" \
     node "$test_dir/run-fixture-regression.cjs" "$fixture"
 done

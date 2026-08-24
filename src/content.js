@@ -243,7 +243,7 @@
     R.counter(hiddenShopListings, async () => {
       await S.setHideShops(false);
       refreshPage();
-    });
+    }, root);
   }
 
   function refreshPage() {
