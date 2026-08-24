@@ -20,7 +20,23 @@ AC.render = (function () {
   // Полупрозрачный фон нельзя оценивать по своим же числам: белый с alpha 0.3
   // поверх чёрного выглядит тёмным. Складываем слои снизу вверх, как это делает
   // браузер, и только потом считаем яркость.
+  // Тема страницы не меняется в течение одного прохода отрисовки, а её вычисление
+  // ходит по всем предкам body с getComputedStyle. До 1.1.2 это делалось на КАЖДЫЙ
+  // штамп и КАЖДЫЙ ряд: на плотной выдаче — сотня обходов подряд. Считаем один раз
+  // за проход, beginPass() сбрасывает кэш.
+  let darkCache = null;
+
+  function beginPass() {
+    darkCache = null;
+  }
+
   function pageIsDark() {
+    if (darkCache !== null) return darkCache;
+    darkCache = computeDark();
+    return darkCache;
+  }
+
+  function computeDark() {
     const layers = [];
     for (let el = document.body; el; el = el.parentElement) {
       const m = (getComputedStyle(el).backgroundColor || '').match(/[\d.]+/g);
@@ -60,6 +76,35 @@ AC.render = (function () {
     `;
   }
 
+  // Один разобранный лист стилей на все Shadow-хосты вместо своего <style> в каждом.
+  // Браузер парсит CSS один раз, а не по разу на карточку. Где конструируемые листы
+  // не поддерживаются — откатываемся на <style>, поведение то же.
+  const sheetCache = new Map();
+  const canAdopt = typeof CSSStyleSheet === 'function'
+    && (() => { try { new CSSStyleSheet(); return true; } catch (e) { return false; } })();
+
+  function applyStyle(shadowRoot, kind, dark, cssText) {
+    const key = kind + (dark ? ':dark' : ':light');
+    if (canAdopt) {
+      let sheet = sheetCache.get(key);
+      if (!sheet) {
+        sheet = new CSSStyleSheet();
+        sheet.replaceSync(cssText());
+        sheetCache.set(key, sheet);
+      }
+      shadowRoot.adoptedStyleSheets = [sheet];
+      return;
+    }
+    let text = sheetCache.get(key);
+    if (text === undefined) {
+      text = cssText();
+      sheetCache.set(key, text);
+    }
+    const style = document.createElement('style');
+    style.textContent = text;
+    shadowRoot.append(style);
+  }
+
   // Плашки живут в Shadow DOM: стили Авито внутрь не текут, наши наружу не ломают.
   function row(cardEl, anchor = cardEl) {
     let host = cardEl.querySelector(':scope > .avito-clean-host, :scope .avito-clean-host');
@@ -73,11 +118,11 @@ AC.render = (function () {
     host = document.createElement('div');
     host.className = 'avito-clean-host';
     const sh = host.attachShadow({ mode: 'open' });
-    const style = document.createElement('style');
-    style.textContent = css(pageIsDark());
+    const dark = pageIsDark();
+    applyStyle(sh, 'row', dark, () => css(dark));
     const r = document.createElement('div');
     r.className = 'row';
-    sh.append(style, r);
+    sh.append(r);
 
     anchor.appendChild(host);
     return r;
@@ -154,21 +199,37 @@ AC.render = (function () {
       + ', это не разовая продажа';
   }
 
-  function stamp(cardEl, seller, dupCount) {
+  // Проверка опоры — чтение стиля, и до 1.1.2 оно стояло ВНУТРИ цикла по карточкам,
+  // между записями в DOM. Каждое такое чтение заставляет браузер пересчитать стиль
+  // заново. Теперь решение принимается заранее, пакетом (см. needsAnchor), а карточка,
+  // однажды проверенная, больше не перечитывается.
+  const anchorChecked = new WeakSet();
+
+  function needsAnchor(cardEl) {
+    if (anchorChecked.has(cardEl)) return false;
+    anchorChecked.add(cardEl);
+    return getComputedStyle(cardEl).position === 'static';
+  }
+
+  function stamp(cardEl, seller, dupCount, anchorDecided) {
     // Абсолютное позиционирование требует опоры. Карточки Авито и так
     // relative, но если попадётся static — подпираем, ничего не ломая.
-    if (getComputedStyle(cardEl).position === 'static') cardEl.style.position = 'relative';
+    // Решение приходит снаружи; без него читаем сами — так вызов остаётся
+    // рабочим для тестов и для одиночной отрисовки.
+    if (anchorDecided === undefined ? needsAnchor(cardEl) : anchorDecided) {
+      cardEl.style.position = 'relative';
+    }
 
     let host = cardEl.querySelector(':scope > .avito-clean-stamp');
     if (!host) {
       host = document.createElement('div');
       host.className = 'avito-clean-stamp';
       const sh = host.attachShadow({ mode: 'open' });
-      const style = document.createElement('style');
-      style.textContent = stampCss(pageIsDark());
+      const dark = pageIsDark();
+      applyStyle(sh, 'stamp', dark, () => stampCss(dark));
       const span = document.createElement('span');
       span.className = 's';
-      sh.append(style, span);
+      sh.append(span);
       cardEl.appendChild(host);
     }
 
@@ -223,5 +284,5 @@ AC.render = (function () {
   }
 
   return { row, dupBadge, seenBadge, counter, cleanupListingUi,
-    stamp, removeStamp, hasStamp };
+    stamp, removeStamp, hasStamp, beginPass, needsAnchor };
 })();

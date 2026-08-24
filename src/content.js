@@ -152,6 +152,9 @@
       return;
     }
 
+    // Один проход — одно вычисление темы страницы (см. render.js).
+    R.beginPass();
+
     const sellerCounts = P.countSellers(list);
     let hideShops = !!S.getHideShops();
     let hiddenShopListings = 0;
@@ -170,6 +173,15 @@
       if (survivors === 0) hideShops = false;
     }
 
+    // Проход разложен на три фазы. Раньше всё делалось в одном цикле: карточке
+    // переписывали классы, тут же читали её вычисленный стиль, тут же вставляли
+    // узлы — и так пятьдесят раз подряд. Каждое чтение после записи заставляет
+    // браузер пересчитать стиль заново, отсюда и секундное замирание на плотной
+    // выдаче. Теперь: сначала считаем (без единой записи), потом ОДНИМ пакетом
+    // читаем стиль там, где он реально нужен, и только потом пишем в DOM.
+
+    // Фаза 1 — только вычисления и дешёвые запросы к DOM, ни одной записи.
+    const plan = [];
     for (const card of list) {
       const sellerCount = card.seller ? (sellerCounts.get(card.seller.id) || 0) : 0;
       const seen = (S.isSeen(card.id) || card.viewedByAvito) && !S.isRestored(card.id);
@@ -179,11 +191,6 @@
 
       if (pro && hideShops) hiddenShopListings++;
 
-      // Авито может переписать className корня карточки, поэтому состояние
-      // восстанавливается на каждом проходе, даже если плашку менять не нужно.
-      card.el.classList.toggle('avito-clean-hidden', pro && hideShops);
-      card.el.classList.toggle('avito-clean-seen', seen);
-
       const wantDuplicate = !!card.seller && sellerCount >= 2;
       const wantAny = seen || wantDuplicate;
       const signature = cardSignature(card, sellerCount, seen, hideShops, pro);
@@ -191,26 +198,46 @@
 
       // Штамп проверяем отдельно: Авито умеет снести наш узел, оставив подпись
       // нетронутой, и тогда карточка навсегда осталась бы без метки.
-      if (card.el.dataset.avitoCleanSig === signature
-          && !!host === wantAny && R.hasStamp(card.el) === pro) continue;
-      card.el.dataset.avitoCleanSig = signature;
+      const unchanged = card.el.dataset.avitoCleanSig === signature
+        && !!host === wantAny && R.hasStamp(card.el) === pro;
 
-      if (pro) R.stamp(card.el, card.seller, sellerCount);
+      plan.push({ card, sellerCount, seen, pro, wantDuplicate, wantAny, signature, host, unchanged });
+    }
+
+    // Фаза 2 — чтения стиля пакетом, до всех записей. Карточка, однажды
+    // проверенная, второй раз не перечитывается (кэш живёт в render.js).
+    for (const p of plan) {
+      p.anchor = (!p.unchanged && p.pro) ? R.needsAnchor(p.card.el) : false;
+    }
+
+    // Фаза 3 — только записи.
+    for (const p of plan) {
+      const card = p.card;
+
+      // Авито может переписать className корня карточки, поэтому состояние
+      // восстанавливается на каждом проходе, даже если плашку менять не нужно.
+      card.el.classList.toggle('avito-clean-hidden', p.pro && hideShops);
+      card.el.classList.toggle('avito-clean-seen', p.seen);
+
+      if (p.unchanged) continue;
+      card.el.dataset.avitoCleanSig = p.signature;
+
+      if (p.pro) R.stamp(card.el, card.seller, p.sellerCount, p.anchor);
       else R.removeStamp(card.el);
 
-      if (!wantAny) {
-        if (host) host.remove();
+      if (!p.wantAny) {
+        if (p.host) p.host.remove();
         continue;
       }
 
       const row = R.row(card.el, card.badgeAnchor);
-      if (seen) {
+      if (p.seen) {
         R.seenBadge(row, card.el, card.id, (id) => {
           S.restoreItem(id);
           refreshPage();
         });
       }
-      if (wantDuplicate) R.dupBadge(row, card.seller, sellerCount);
+      if (p.wantDuplicate) R.dupBadge(row, card.seller, p.sellerCount);
     }
 
     R.counter(hiddenShopListings, async () => {
