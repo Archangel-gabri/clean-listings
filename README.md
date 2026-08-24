@@ -14,6 +14,9 @@ to a single seller.
 
 No build step. No dependencies. No network calls. Two permissions.
 
+> Installed, it appears in the browser as **«Авито Помощник»** — the project name here is
+> the English one.
+
 ---
 
 ## Why it exists
