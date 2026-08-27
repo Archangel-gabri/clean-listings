@@ -108,13 +108,18 @@ set it: the site signals "show all" by removing the parameter rather than by set
 ## Tests
 
 28 regression tests across 5 suites — parsing, rendering, storage, popup, performance — run on
-DOM fixtures with plain Node, no framework:
+sanitized DOM fixtures captured from live search results:
 
 ```bash
-node tests/run-fixture-regression.cjs
-# or
-bash tests/run-fixture-regression.sh
+npm install                      # playwright only, and only for the tests
+npx playwright install chromium
+npm test
 ```
+
+The extension itself has no dependencies — `playwright` is used solely by the test runner to
+drive a browser against the fixtures. The runner launches its own headless browser, so it works
+on a fresh clone. To watch it in a visible window, attach to an existing one:
+`CDP_URL=http://127.0.0.1:9222 npm test`.
 
 They cover the failures that actually happened: the empty-page case, cross-tab storage races,
 lazy-loaded cards, the stamp overlapping the site's own badge, and the counter covering the

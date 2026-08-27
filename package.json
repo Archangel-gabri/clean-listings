@@ -1,0 +1,14 @@
+{
+  "name": "clean-listings",
+  "version": "1.1.2",
+  "private": true,
+  "description": "Chrome extension that cleans up a classifieds search page. The extension itself ships zero runtime dependencies; playwright is used only to run the regression fixtures.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/run.cjs",
+    "check": "node --check src/config.js && node --check src/store.js && node --check src/parse.js && node --check src/render.js && node --check src/content.js && node --check popup/popup.js && npm test"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
