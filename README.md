@@ -132,6 +132,30 @@ site's filter column.
 - **One site:** the content script matches a single domain.
 - Everything the extension remembers stays in local browser storage and never leaves the device.
 
+## Layout
+
+```
+.
+├── manifest.json          MV3: two permissions, one domain, script load order
+├── src/
+│   ├── config.js          reseller thresholds, section names, filter retry cap
+│   ├── parse.js           search DOM -> cards: id, price, seller, review count
+│   ├── store.js           chrome.storage: viewed marks with TTL, settings
+│   ├── render.js          stamps, dimming, the "hidden" bar — in three phases, with no
+│   │                      reads interleaved between writes
+│   └── content.js         entry point: page type, lazy-load observer, URL filter
+├── popup/                 extension window: toggle and summary
+├── tests/                 5 suites over DOM fixtures from live results, plus the runner
+├── docs/
+│   ├── live-test-2026-08-22.txt    live-site measurements: selectors, medians, pagination
+│   └── store-listing.ru.txt        store listing copy
+└── CHANGELOG.md           what changed, and the numbers behind it
+```
+
+Dependencies run one way: `content.js` conducts, the other modules know nothing about each other.
+`parse` only reads the DOM, `render` only writes, `store` knows about neither — which is why each
+one is testable against a fixture on its own.
+
 ## Stack
 
 Manifest V3 · vanilla JavaScript, no framework and no build step · Shadow DOM for style
@@ -151,4 +175,4 @@ an independent open-source tool and is not affiliated with or endorsed by them.*
 
 ---
 
-*Store listing text (Russian): [`store/listing.ru.txt`](store/listing.ru.txt)*
+*Store listing text (Russian): [`docs/store-listing.ru.txt`](docs/store-listing.ru.txt)*
