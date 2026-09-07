@@ -61,12 +61,15 @@
 
   function memo(key, value) {
     try {
-      if (value === undefined) return sessionStorage.getItem(key);
+      if (value === undefined) {
+        return { available: true, value: sessionStorage.getItem(key) };
+      }
       sessionStorage.setItem(key, value);
-      return value;
+      return { available: true, value };
     } catch (_) {
-      // Приватный режим или запрет хранилища: работаем без памяти о поиске.
-      return null;
+      // Без надёжной памяти автоматический переход запрещён: иначе следующая
+      // загрузка снова увидит ноль попыток и получится бесконечный цикл.
+      return { available: false, value: null };
     }
   }
 
@@ -93,7 +96,13 @@
   const FILTER_TRIES = 'avito-clean:filter-tries:';
 
   function triesFor(key) {
-    return Number(memo(FILTER_TRIES + key)) || 0;
+    const result = memo(FILTER_TRIES + key);
+    const parsed = result.value === null ? 0 : Number(result.value);
+    return {
+      available: result.available,
+      // Повреждённый origin-storage не должен увеличивать бюджет навигаций.
+      value: Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : C.MAX_FILTER_TRIES
+    };
   }
 
   // true — страница уже уходит на перезагрузку, рисовать по текущему DOM нечего.
@@ -113,7 +122,8 @@
 
     const key = filterKey(url);
     const want = !!S.getHideShops();
-    const applied = memo(key);
+    const appliedMemo = memo(key);
+    const applied = appliedMemo.value;
     const hasParam = url.searchParams.has(param);
 
     // Параметр на месте — прошлая попытка удержалась, счёт начинаем заново.
@@ -123,14 +133,24 @@
     if (want && !hasParam && (force || applied !== 'off')) {
       // Явное переключение тумблера — прямая просьба человека, ей даём
       // свежий бюджет попыток. Всё остальное считается по накопленному.
-      const tries = force ? 0 : triesFor(key);
+      const triesMemo = force ? { available: true, value: 0 } : triesFor(key);
+      // Без доступного sessionStorage auto-load не может отличить первую
+      // попытку от сотой. Остаёмся на странице и фильтруем текущий DOM.
+      if (!force && (!appliedMemo.available || !triesMemo.available)) return false;
+      const tries = triesMemo.value;
       // Параметр не пережил уже две загрузки: этот раздел его не держит.
       // Дальше не перезагружаемся, гасим на клиенте.
       if (tries >= C.MAX_FILTER_TRIES) return false;
 
       url.searchParams.set(param, value);
-      memo(key, 'on');
-      memo(FILTER_TRIES + key, String(tries + 1));
+      const triesWrite = memo(FILTER_TRIES + key, String(tries + 1));
+      // Счётчик пишем первым и при auto-load останавливаемся сразу при ошибке:
+      // иначе успешная вторая запись оставила бы ложный маркер «фильтр наш».
+      if (!force && !triesWrite.available) return false;
+      const appliedWrite = memo(key, 'on');
+      // Чтение может работать, а запись быть запрещена. Для автоматического
+      // перехода обе записи обязаны сохраниться до location.replace.
+      if (!force && !appliedWrite.available) return false;
       beginNavigation(url.toString());
       return true;
     }
@@ -138,7 +158,8 @@
     // Выключили тумблер — снимаем и параметр, но только если его поставили мы.
     if (!want && url.searchParams.get(param) === value && applied === 'on') {
       url.searchParams.delete(param);
-      memo(key, 'off');
+      const appliedWrite = memo(key, 'off');
+      if (!force && (!appliedMemo.available || !appliedWrite.available)) return false;
       beginNavigation(url.toString());
       return true;
     }

@@ -3,7 +3,7 @@
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-4c8bf5)](manifest.json)
 [![No dependencies](https://img.shields.io/badge/dependencies-none-2ea44f)](#stack)
 [![No network calls](https://img.shields.io/badge/network%20calls-none-2ea44f)](#privacy)
-[![Tests](https://img.shields.io/badge/regression%20tests-28-2ea44f)](tests/)
+[![Tests](https://img.shields.io/badge/test%20runners-4-2ea44f)](#tests)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **[Русская версия →](README.ru.md)**
@@ -79,13 +79,17 @@ the stamps. This is not theoretical: on a car-dealer search it triggered on 50 c
 An earlier version dimmed everything and left a blank screen.
 
 **A 0.8-second freeze, found with a profiler rather than by eye.**
-Three runs per side on a live search page, longest task:
+Historical live measurements from the August 2026 release work, longest task:
 
 | | Longest task |
 |---|---|
 | Without the extension | 109–125 ms |
 | Version 1.1.1 | 732 / 933 / 732 ms |
-| Version 1.1.2 | 214 / 196 / 211 ms |
+| Version 1.1.2, final run | 186–199 ms, median 193 ms |
+
+These are the final historical figures, not a new performance measurement of the current
+working tree. See [verification notes](docs/verification-2026-09-07.md) for the distinction
+between release provenance, offline checks and the bounded September live smoke.
 
 The cause was interleaving DOM writes with reads of computed style, which forces the browser
 to recalculate layout on every read. Across fifty cards it added up. What proved the diagnosis:
@@ -107,23 +111,35 @@ set it: the site signals "show all" by removing the parameter rather than by set
 
 ## Tests
 
-28 regression tests across 5 suites — parsing, rendering, storage, popup, performance — run on
-sanitized DOM fixtures captured from live search results:
+`npm test` runs four test runners in sequence:
+
+| Runner | Coverage |
+|---|---|
+| `tests/filter-retry-regression.cjs` | Eight Node VM cases over the production filter function with fake storage/navigation: retry budgets, unavailable or partially writable `sessionStorage`, explicit toggles, damaged counters and preservation of a native filter the extension does not own. |
+| `tests/manifest-regression.cjs` | Content-script load order and all 15 JS/CSS/popup/icon references, restricted to files inside the project. |
+| `tests/unpacked-smoke.cjs` | Loads the real unpacked MV3 extension in a separate offline Chromium profile and checks its stamp on an intercepted synthetic page; all other requests are blocked. |
+| `tests/run.cjs` | The existing 28 regressions across five sanitized DOM-fixture suites: parsing/rendering, content script, rendering-structure/layout regressions, storage and popup. |
+
+Test dependency setup and full gate:
 
 ```bash
 npm install                      # playwright only, and only for the tests
 npx playwright install chromium
-npm test
+npm run check                    # JavaScript syntax checks, then all four runners
 ```
 
-The extension itself has no dependencies — `playwright` is used solely by the test runner to
-drive a browser against the fixtures. The runner launches its own headless browser, so it works
-on a fresh clone. To watch it in a visible window, attach to an existing one:
-`CDP_URL=http://127.0.0.1:9222 npm test`.
+The extension itself has no runtime dependencies; `playwright` is used only for browser tests.
+`npm test` runs the same four runners without the preceding syntax checks. The DOM runner
+launches its own headless browser by default. To debug only that corpus in an existing visible
+browser, use `CDP_URL=http://127.0.0.1:9222 node tests/run.cjs`.
+The MV3 smoke always uses its own temporary profile and removes it after the run.
 
 They cover the failures that actually happened: the empty-page case, cross-tab storage races,
 lazy-loaded cards, the stamp overlapping the site's own badge, and the counter covering the
-site's filter column.
+site's filter column. Passing fixtures does not prove compatibility with today's live search
+results, nor does the performance/layout fixture constitute a fresh live performance benchmark.
+The limited live checks and their exclusions are recorded in the
+[verification report](docs/verification-2026-09-07.md).
 
 ## Privacy
 
@@ -145,7 +161,7 @@ site's filter column.
 │   │                      reads interleaved between writes
 │   └── content.js         entry point: page type, lazy-load observer, URL filter
 ├── popup/                 extension window: toggle and summary
-├── tests/                 5 suites over DOM fixtures from live results, plus the runner
+├── tests/                 DOM corpus, filter retry, manifest checks and offline MV3 smoke
 ├── docs/
 │   ├── live-test-2026-08-22.txt    live-site measurements: selectors, medians, pagination
 │   └── store-listing.ru.txt        store listing copy
