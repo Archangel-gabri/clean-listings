@@ -189,6 +189,8 @@ in the code you see here. Versions 1.1.2 and later build on that work.
 [MIT](LICENSE) — Vadim Kubrak. *Avito is a trademark of its respective owner. This project is
 an independent open-source tool and is not affiliated with or endorsed by them.*
 
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ---
 
 *Store listing text (Russian): [`docs/store-listing.ru.txt`](docs/store-listing.ru.txt)*
